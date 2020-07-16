@@ -31,6 +31,3 @@ build/
 
 ### VS Code ###
 .vscode/
-src/main/java/com/codepuran/carvaan/service/
-src/main/resources/static/
-src/main/resources/templates/

@@ -28,7 +28,8 @@ public class DataPreparationController {
     }
 
     @GetMapping("/artistes")
-    public GenericResponse processArtistesSongs() {
+    public GenericResponse processArtistesSongs() throws IOException {
+        dataPreparationService.processArtistes();
         return GenericResponse
                 .builder()
                 .message("Data preparation completed successfully")
