@@ -26,4 +26,12 @@ public class DataPreparationController {
                 .message("Data preparation completed successfully")
                 .build();
     }
+
+    @GetMapping("/artistes")
+    public GenericResponse processArtistesSongs() {
+        return GenericResponse
+                .builder()
+                .message("Data preparation completed successfully")
+                .build();
+    }
 }
