@@ -19,4 +19,6 @@ public class Album {
 
     @Column(name = "name", nullable = false, length = 1000)
     private String name;
+
+
 }

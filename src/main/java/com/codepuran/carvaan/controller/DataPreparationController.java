@@ -28,7 +28,7 @@ public class DataPreparationController {
     }
 
     @GetMapping("/artistes")
-    public GenericResponse processArtistesSongs() throws IOException {
+    public GenericResponse processArtistesSongs() throws IOException, CloneNotSupportedException {
         dataPreparationService.processArtistes();
         return GenericResponse
                 .builder()

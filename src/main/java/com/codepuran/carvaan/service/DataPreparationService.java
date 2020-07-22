@@ -1,6 +1,10 @@
 package com.codepuran.carvaan.service;
 
 import com.codepuran.carvaan.dto.FileSplitDto;
+import com.codepuran.carvaan.dto.ParsedSongsDto;
+import com.codepuran.carvaan.entity.*;
+import com.codepuran.carvaan.repository.*;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.multipdf.Splitter;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -8,23 +12,38 @@ import org.apache.pdfbox.text.PDFTextStripper;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class DataPreparationService {
 
+    private final AlbumRepository albumRepository;
+
+    private final ArtistesRepository artistesRepository;
+
+    private final SongRepository songRepository;
+
+    private final FilmRepository filmRepository;
+
+    private final MoodRepository moodRepository;
+
     public void prepareData() throws IOException {
-        var whereToSplitFile = new int[] {2,3,91,141};
         Resource resource = new ClassPathResource("data/Saregama_Carvaan_Songlist_2.0.pdf");
         File file = resource.getFile();
         if(file.exists()) {
@@ -49,38 +68,341 @@ public class DataPreparationService {
         }
     }
 
-    public void processArtistes() throws IOException {
-        // List of file in directory
+    public void processArtistes() throws IOException, CloneNotSupportedException {
         List<File> artistesFiles = listFilesInDirectory("data/processed/artistes");
         int i = 0;
+        Pattern digitPattern = Pattern.compile("^\\d+\\.");
+        Pattern filmPattern = Pattern.compile("^\\s?Film:");
+        Pattern artistesPattern = Pattern.compile("^S?Artistes?:");
+        Pattern albumPattern = Pattern.compile("^\\s?Album:");
         for(File file: artistesFiles) {
-            //TODO read pdf file data as text
-            PDDocument document = PDDocument.load(file);
-            PDFTextStripper pdfTextStripper = new PDFTextStripper();
-            String pdfData = pdfTextStripper.getText(document);
-            log.debug(pdfData);
-            //TODO make a list of it
-
-            document.close();
-            /*++i;
-            if(i==1){
-                break;
-            }*/
+            String pdfData = getContentOfPDFAsString(file);
+            String[] allLines = pdfData.split("\\r?\\n");
+            String primaryArtiste = file.getName().split(".pdf")[0];
+            String current = "";
+            List<ParsedSongsDto> parsedSongsDtos = new ArrayList<>();
+            ParsedSongsDto parsedSongDto = new ParsedSongsDto();
+            parsedSongDto.setPrimaryArtiste(primaryArtiste);
+            parsedSongDto.setFilled(false);
+            for(String line : allLines) {
+                Matcher filmMatcher = filmPattern.matcher(line);
+                Matcher artisteMatcher = artistesPattern.matcher(line);
+                Matcher digitMatcher = digitPattern.matcher(line);
+                Matcher albumMatcher = albumPattern.matcher(line);
+                if(digitMatcher.find()) {
+                    current = "digit";
+                    if(parsedSongDto.getFilled()) {
+                        //parsedSongsDtos.add((ParsedSongsDto) parsedSongDto.clone());
+                        addParseSongDtoToListAndCleanItBeforeForArtistes(parsedSongsDtos,parsedSongDto);
+                        parsedSongDto = new ParsedSongsDto();
+                        parsedSongDto.setPrimaryArtiste(primaryArtiste);
+                        parsedSongDto.setFilled(false);
+                    }
+                    Pattern numberPattern = Pattern.compile("^\\d+");
+                    Matcher numberMatcher = numberPattern.matcher(line);
+                    if(numberMatcher.find()){
+                        parsedSongDto.setNo(numberMatcher.group());
+                    }
+                    String name = line.split("^\\d+\\.")[1];
+                    parsedSongDto.setName(name);
+                } else if(filmMatcher.find()) {
+                    current = "film";
+                    String film = line.split("^\\s?Film:")[1];
+                    parsedSongDto.setFilm(film);
+                } else if(albumMatcher.find()){
+                    current = "album";
+                    String album = line.split("^\\s?Album:")[1];
+                    parsedSongDto.setAlbum(album);
+                } else if(artisteMatcher.find()) {
+                    current = "artiste";
+                    parsedSongDto.setFilled(true);
+                    String artiste = line.split("^S?Artistes?:")[1];
+                    parsedSongDto.setRawArtistes(artiste);
+                } else {
+                    switch (current) {
+                        case "digit":
+                            parsedSongDto.setName(parsedSongDto.getName() + line);
+                            break;
+                        case "film":
+                            parsedSongDto.setFilm(parsedSongDto.getFilm() + line);
+                            break;
+                        case "album":
+                            parsedSongDto.setAlbum(parsedSongDto.getAlbum() + line);
+                            break;
+                        case "artiste":
+                            parsedSongDto.setRawArtistes(parsedSongDto.getRawArtistes() + line);
+                            break;
+                        default:
+                            log.warn("Akshay, You need to look here || Line: {}",line);
+                    }
+                }
+            }
+            addParseSongDtoToListAndCleanItBeforeForArtistes(parsedSongsDtos,parsedSongDto);
+            log.debug("Primary Artiste: {} || Songs Size: {}", primaryArtiste, parsedSongsDtos.size());
+            saveArtistesSongsToDatabase(parsedSongsDtos);
         }
-        //TODO Save prepared list to db
     }
 
-    public List<File> listFilesInDirectory(String pathRelativeResourceDirectory) throws IOException {
+    @Transactional
+    private void saveArtistesSongsToDatabase(List<ParsedSongsDto> parsedSongsDtos) {
+        saveAlbums(parsedSongsDtos);
+        saveArtistes(parsedSongsDtos);
+        saveFilm(parsedSongsDtos);
+        saveSongs(parsedSongsDtos);
+    }
+
+    @Transactional
+    private void saveSongs(List<ParsedSongsDto> parsedSongsDtos) {
+
+        List<Film> films = filmRepository.findAll();
+        List<Album> albums = albumRepository.findAll();
+        List<Artiste> artistes = artistesRepository.findAll();
+        List<Mood> moods = moodRepository.findAll();
+
+        for(ParsedSongsDto parsedSongsDto: parsedSongsDtos) {
+            List<Song> songs = songRepository.findByName(parsedSongsDto.getName());
+            Song song = null;
+            for(Song eachSong: songs) {
+                if(eachSong.getFilm() != null && parsedSongsDto.getFilm() != null) {
+                    if(eachSong.getFilm() != null && eachSong.getFilm().getName().equals(parsedSongsDto.getFilm())) {
+                        song = eachSong;
+                    } else if(eachSong.getAlbum()!= null && eachSong.getAlbum().getName().equals(parsedSongsDto.getAlbum())) {
+                        song = eachSong;
+                    }
+                }
+            }
+            if(song == null) {
+                song = new Song();
+            }
+
+            song.setName(parsedSongsDto.getName());
+
+            if(parsedSongsDto.getFilm() != null) {
+                Optional<Film> filmOptional = films.stream().filter(o -> o.getName().equals(parsedSongsDto.getFilm())).findFirst();
+                Film film;
+                if(!filmOptional.isPresent()) {
+                    film = Film.builder()
+                            .name(parsedSongsDto.getFilm())
+                            .build();
+                    film = filmRepository.saveAndFlush(film);
+                    films.add(film);
+                } else {
+                    film = filmOptional.get();
+                }
+                song.setFilm(film);
+            }
+
+            if(parsedSongsDto.getAlbum() != null) {
+                Optional<Album> albumOptional = albums.stream().filter(o -> o.getName().equals(parsedSongsDto.getAlbum())).findFirst();
+                Album album;
+                if(!albumOptional.isPresent()) {
+                    album = Album.builder()
+                            .name(parsedSongsDto.getAlbum())
+                            .build();
+                    album = albumRepository.saveAndFlush(album);
+                    albums.add(album);
+                } else {
+                    album = albumOptional.get();
+                }
+                song.setAlbum(album);
+            }
+
+            if(parsedSongsDto.getArtistes() != null && !parsedSongsDto.getArtistes().isEmpty()) {
+                Set<Artiste> artistesOfSongs = new HashSet<>();
+
+                for(String artisteName : parsedSongsDto.getArtistes()) {
+                    Optional<Artiste> artisteOptional = artistes.stream().filter(o -> o.getName().equals(artisteName)).findFirst();
+
+                    Artiste artiste;
+
+                    if(!artisteOptional.isPresent()) {
+                        artiste = Artiste.builder()
+                                .name(artisteName)
+                                .isPrimary(false)
+                                .build();
+                        artiste = artistesRepository.saveAndFlush(artiste);
+                        artistes.add(artiste);
+                    } else {
+                        artiste = artisteOptional.get();
+                    }
+
+                    artistesOfSongs.add(artiste);
+                }
+
+                Set<Artiste> existingArtistes = song.getArtistes();
+
+                if(existingArtistes == null) {
+                    existingArtistes = new HashSet<>();
+                }
+                existingArtistes.addAll(artistesOfSongs);
+                song.setArtistes(existingArtistes);
+            }
+
+            if(parsedSongsDto.getMood() != null) {
+                Optional<Mood> moodOptional = moods.stream().filter(o -> o.getName().equals(parsedSongsDto.getMood())).findFirst();
+                Mood mood;
+                if(!moodOptional.isPresent()) {
+                    mood = Mood.builder()
+                            .name(parsedSongsDto.getAlbum())
+                            .build();
+                    mood = moodRepository.saveAndFlush(mood);
+                    moods.add(mood);
+                } else {
+                    mood = moodOptional.get();
+                }
+
+                if(song.getMood() != null) {
+                    if(!song.getMood().getName().equals(mood.getName())){
+                        log.warn("--------------------------------------------------------------------------------");
+                        log.warn("Another Moved Found For Same Song Mood Found");
+                        log.warn("Song: {}", song);
+                        log.warn("ParsedSongDto: {}", parsedSongsDto);
+                        log.warn("--------------------------------------------------------------------------------");
+                    }
+                } else {
+                    song.setMood(mood);
+                }
+            }
+            songRepository.saveAndFlush(song);
+        }
+    }
+
+    @Transactional
+    private void saveAlbums(List<ParsedSongsDto> parsedSongsDtos) {
+        Set<String> albumNames = parsedSongsDtos.stream().map(ParsedSongsDto::getAlbum).collect(Collectors.toSet());
+
+        albumNames.remove(null);
+        albumNames.remove("");
+
+        List<Album> albums = new ArrayList<>();
+
+        for(String albumName: albumNames) {
+            albums.add(Album.builder()
+                    .name(albumName)
+                    .build());
+        }
+
+        for(Album album : albums) {
+            Optional<Album> existingFilm = albumRepository.findByName(album.getName());
+            if(!existingFilm.isPresent()) {
+                albumRepository.saveAndFlush(album);
+            }
+        }
+    }
+
+    @Transactional
+    private void saveFilm(List<ParsedSongsDto> parsedSongsDtos) {
+        Set<String> filmNames = parsedSongsDtos.stream().map(ParsedSongsDto::getFilm).collect(Collectors.toSet());
+
+        filmNames.remove(null);
+        filmNames.remove("");
+
+        List<Film> films = new ArrayList<>();
+
+        for(String filmName: filmNames) {
+            films.add(Film.builder()
+                    .name(filmName)
+                    .build());
+        }
+
+        for(Film film : films) {
+            Optional<Film> existingFilm = filmRepository.findByName(film.getName());
+            if(!existingFilm.isPresent()) {
+                filmRepository.saveAndFlush(film);
+            }
+        }
+    }
+
+    @Transactional
+    private void saveArtistes(List<ParsedSongsDto> parsedSongsDtos) {
+        Set<String> primaryArtistesNames = parsedSongsDtos.stream().map(ParsedSongsDto::getPrimaryArtiste).collect(Collectors.toSet());
+
+        primaryArtistesNames.remove(null);
+        primaryArtistesNames.remove("");
+
+        List<Artiste> artists = new ArrayList<>();
+
+        for(ParsedSongsDto parsedSongsDto : parsedSongsDtos) {
+            Set<String> artistesOfSongs = parsedSongsDto.getArtistes();
+            if(artistesOfSongs == null) {
+                artistesOfSongs = new HashSet<>();
+            }
+            for(String parsedArtistName: artistesOfSongs) {
+                artists.add(Artiste.builder()
+                        .isPrimary(primaryArtistesNames.contains(parsedArtistName))
+                        .name(parsedArtistName.trim())
+                        .build());
+            }
+        }
+
+        artists = artists.stream().filter(distinctByKey(Artiste::getName)).collect(Collectors.toList());
+
+        for(Artiste artiste : artists) {
+            Optional<Artiste> existingFilm = artistesRepository.findByName(artiste.getName());
+            if(!existingFilm.isPresent()) {
+                artistesRepository.saveAndFlush(artiste);
+            }
+        }
+    }
+
+    public static <T> Predicate<T> distinctByKey(Function<? super T, ?> keyExtractor) {
+        Set<Object> seen = ConcurrentHashMap.newKeySet();
+        return t -> seen.add(keyExtractor.apply(t));
+    }
+
+    private void addParseSongDtoToListAndCleanItBeforeForArtistes(List<ParsedSongsDto> parsedSongsDtos, ParsedSongsDto parsedSongsDto) throws CloneNotSupportedException {
+
+        String songName = parsedSongsDto.getName();
+        if(songName != null) {
+            parsedSongsDto.setName(songName.replaceAll("( +)"," ").trim());
+        } else {
+            log.warn("Song Found Null || Artiste: {} || Record No: {}", parsedSongsDto.getName(), parsedSongsDto.getNo());
+        }
+
+        String filmName = parsedSongsDto.getFilm();
+        if(filmName != null) {
+            parsedSongsDto.setFilm(filmName.replaceAll("( +)"," ").trim());
+        } else {
+            if(parsedSongsDto.getAlbum() == null)
+                log.warn("Film Found Null || Artiste: {} || Record No: {} || Song: {}", parsedSongsDto.getPrimaryArtiste(), parsedSongsDto.getNo(), parsedSongsDto.getName());
+        }
+
+        String album = parsedSongsDto.getAlbum();
+        if(album != null) {
+            parsedSongsDto.setAlbum(album.replaceAll("( +)"," ").trim());
+        } else {
+            if(parsedSongsDto.getFilm() == null)
+                log.warn("Album Found Null || Artiste: {} || Record No: {} || Song: {}", parsedSongsDto.getPrimaryArtiste(), parsedSongsDto.getNo(), parsedSongsDto.getName());
+        }
+
+        String rawArtiste = parsedSongsDto.getRawArtistes();
+        if(rawArtiste != null) {
+            rawArtiste = rawArtiste.replaceAll("( +)"," ").trim();
+            List<String> tempList = Arrays.asList(rawArtiste.split(","));
+            Set<String> artisteSet = new HashSet<>();
+            artisteSet.add(parsedSongsDto.getPrimaryArtiste());
+            artisteSet.addAll(tempList);
+            parsedSongsDto.setArtistes(artisteSet);
+        } else {
+            log.warn("Raw Artiste Found Null || Artiste: {} || Record No: {} || Song: {}", parsedSongsDto.getPrimaryArtiste(), parsedSongsDto.getNo(), parsedSongsDto.getName());
+        }
+        parsedSongsDtos.add((ParsedSongsDto) parsedSongsDto.clone());
+    }
+
+    private String getContentOfPDFAsString(File file) throws IOException {
+        PDDocument document = PDDocument.load(file);
+        PDFTextStripper pdfTextStripper = new PDFTextStripper();
+        String result = pdfTextStripper.getText(document);
+        document.close();
+        return result;
+    }
+
+    private List<File> listFilesInDirectory(String pathRelativeResourceDirectory) throws IOException {
         Resource resource = new ClassPathResource(pathRelativeResourceDirectory);
         var resourcePath =  resource.getURI().getPath();
-        log.debug(resourcePath);
         resourcePath = resourcePath.substring(1,resourcePath.length());
-        log.debug("Updated Path: "+ resourcePath);
         List<File> filesInDirectory = null;
         try (Stream<Path> walk = Files.walk(Paths.get(resourcePath))) {
-            /*List<String> result = walk.filter(Files::isRegularFile)
-                    .map(x -> x.toString()).collect(Collectors.toList());
-           result.forEach(System.out::println);*/
            filesInDirectory =  walk.filter(Files::isRegularFile).map(x -> x.toFile()).collect(Collectors.toList());
         } catch (IOException e) {
             e.printStackTrace();
@@ -88,7 +410,7 @@ public class DataPreparationService {
         return filesInDirectory;
     }
 
-    List<FileSplitDto> getSplitterDetail() {
+    private List<FileSplitDto> getSplitterDetail() {
         List<FileSplitDto> splitDtos = new ArrayList<>();
         splitDtos.add(FileSplitDto.builder().name("Index").firstPage(2).lastPage(2).build());
         splitDtos.add(FileSplitDto.builder().name("Lata Mangeshkar").firstPage(3).lastPage(14).build());

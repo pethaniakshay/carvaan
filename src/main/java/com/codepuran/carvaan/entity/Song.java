@@ -29,10 +29,14 @@ public class Song {
     private Set<Artiste> artistes;
 
     @ManyToOne
-    @JoinColumn(name = "album", referencedColumnName = "id")
+    @JoinColumn(name = "album_id", referencedColumnName = "id")
     private Album album;
 
     @ManyToOne
-    @JoinColumn(name = "film", referencedColumnName = "id")
+    @JoinColumn(name = "film_id", referencedColumnName = "id")
     private Film film;
+
+    @ManyToOne(cascade = {CascadeType.DETACH})
+    @JoinColumn(name = "mood_id", referencedColumnName = "id")
+    private Mood mood;
 }

@@ -3,6 +3,7 @@ package com.codepuran.carvaan.entity;
 import lombok.*;
 
 import javax.persistence.*;
+import java.util.Objects;
 
 @Getter
 @Setter
@@ -20,4 +21,21 @@ public class Artiste {
 
     @Column(name = "name", nullable = false, length = 1000)
     private String name;
+
+    @Column(name = "is_primary")
+    private Boolean isPrimary;
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Artiste artiste = (Artiste) o;
+        return id.equals(artiste.id) &&
+                name.equals(artiste.name);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(id, name);
+    }
 }
