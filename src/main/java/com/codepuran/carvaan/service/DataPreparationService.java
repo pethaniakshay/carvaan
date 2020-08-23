@@ -68,12 +68,14 @@ public class DataPreparationService {
     }
 
     public void processArtistes() throws IOException, CloneNotSupportedException {
-        List<File> artistesFiles = listFilesInDirectory("data/processed/artistes");
+        //List<File> artistesFiles = listFilesInDirectory("data/processed/artistes");
+        List<File> artistesFiles = listFilesInDirectory("data/processed/test");
         Pattern digitPattern = Pattern.compile("^\\d+\\.");
         Pattern filmPattern = Pattern.compile("^\\s?Film:");
-        Pattern artistesPattern = Pattern.compile("^S?Artistes?:");
+        Pattern artistesPattern = Pattern.compile("^\\s?S?Artistes?:");
         Pattern albumPattern = Pattern.compile("^\\s?Album:");
         for(File file: artistesFiles) {
+            log.debug("Processing {} ", file.getName());
             String pdfData = getContentOfPDFAsString(file);
             String[] allLines = pdfData.split("\\r?\\n");
             String primaryArtiste = file.getName().split(".pdf")[0];
@@ -83,39 +85,54 @@ public class DataPreparationService {
             parsedSongDto.setPrimaryArtiste(primaryArtiste);
             parsedSongDto.setFilled(false);
             for(String line : allLines) {
+
+                log.trace("Line: {}", line);
+                log.trace("=======================");
+
                 Matcher filmMatcher = filmPattern.matcher(line);
                 Matcher artisteMatcher = artistesPattern.matcher(line);
                 Matcher digitMatcher = digitPattern.matcher(line);
                 Matcher albumMatcher = albumPattern.matcher(line);
+
                 if(digitMatcher.find()) {
+
                     current = "digit";
+
                     if(parsedSongDto.getFilled()) {
-                        //parsedSongsDtos.add((ParsedSongsDto) parsedSongDto.clone());
                         addParseSongDtoToListAndCleanItBeforeForArtistes(parsedSongsDtos,parsedSongDto);
                         parsedSongDto = new ParsedSongsDto();
                         parsedSongDto.setPrimaryArtiste(primaryArtiste);
                         parsedSongDto.setFilled(false);
                     }
+
                     Pattern numberPattern = Pattern.compile("^\\d+");
                     Matcher numberMatcher = numberPattern.matcher(line);
+
                     if(numberMatcher.find()){
                         parsedSongDto.setNo(numberMatcher.group());
                     }
+
                     String name = line.split("^\\d+\\.")[1];
                     parsedSongDto.setName(name);
                 } else if(filmMatcher.find()) {
+
                     current = "film";
                     String film = line.split("^\\s?Film:")[1];
                     parsedSongDto.setFilm(film);
+
                 } else if(albumMatcher.find()){
+
                     current = "album";
                     String album = line.split("^\\s?Album:")[1];
                     parsedSongDto.setAlbum(album);
+
                 } else if(artisteMatcher.find()) {
+
                     current = "artiste";
                     parsedSongDto.setFilled(true);
-                    String artiste = line.split("^S?Artistes?:")[1];
+                    String artiste = line.split("^\\s?S?Artistes?:")[1];
                     parsedSongDto.setRawArtistes(artiste);
+
                 } else {
                     switch (current) {
                         case "digit" -> parsedSongDto.setName(parsedSongDto.getName() + line);
@@ -313,7 +330,8 @@ public class DataPreparationService {
             }
             for(String parsedArtistName: artistesOfSongs) {
                 artists.add(Artiste.builder()
-                        .isPrimary(primaryArtistesNames.contains(parsedArtistName))
+                        .isPrimary(primaryArtistesNames.stream().filter(s -> s.trim().equals(parsedArtistName.trim())).findFirst().isPresent())
+                        //.isPrimary(primaryArtistesNames.contains(parsedArtistName))
                         .name(parsedArtistName.trim())
                         .build());
             }
