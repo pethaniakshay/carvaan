@@ -12,7 +12,6 @@ import org.apache.pdfbox.text.PDFTextStripper;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.io.File;
 import java.io.IOException;
@@ -70,7 +69,6 @@ public class DataPreparationService {
 
     public void processArtistes() throws IOException, CloneNotSupportedException {
         List<File> artistesFiles = listFilesInDirectory("data/processed/artistes");
-        int i = 0;
         Pattern digitPattern = Pattern.compile("^\\d+\\.");
         Pattern filmPattern = Pattern.compile("^\\s?Film:");
         Pattern artistesPattern = Pattern.compile("^S?Artistes?:");
@@ -120,20 +118,11 @@ public class DataPreparationService {
                     parsedSongDto.setRawArtistes(artiste);
                 } else {
                     switch (current) {
-                        case "digit":
-                            parsedSongDto.setName(parsedSongDto.getName() + line);
-                            break;
-                        case "film":
-                            parsedSongDto.setFilm(parsedSongDto.getFilm() + line);
-                            break;
-                        case "album":
-                            parsedSongDto.setAlbum(parsedSongDto.getAlbum() + line);
-                            break;
-                        case "artiste":
-                            parsedSongDto.setRawArtistes(parsedSongDto.getRawArtistes() + line);
-                            break;
-                        default:
-                            log.warn("Akshay, You need to look here || Line: {}",line);
+                        case "digit" -> parsedSongDto.setName(parsedSongDto.getName() + line);
+                        case "film" -> parsedSongDto.setFilm(parsedSongDto.getFilm() + line);
+                        case "album" -> parsedSongDto.setAlbum(parsedSongDto.getAlbum() + line);
+                        case "artiste" -> parsedSongDto.setRawArtistes(parsedSongDto.getRawArtistes() + line);
+                        default -> log.warn("Akshay, You need to look here || Line: {}", line);
                     }
                 }
             }
@@ -143,7 +132,6 @@ public class DataPreparationService {
         }
     }
 
-    @Transactional
     private void saveArtistesSongsToDatabase(List<ParsedSongsDto> parsedSongsDtos) {
         saveAlbums(parsedSongsDtos);
         saveArtistes(parsedSongsDtos);
@@ -151,7 +139,6 @@ public class DataPreparationService {
         saveSongs(parsedSongsDtos);
     }
 
-    @Transactional
     private void saveSongs(List<ParsedSongsDto> parsedSongsDtos) {
 
         List<Film> films = filmRepository.findAll();
@@ -180,7 +167,7 @@ public class DataPreparationService {
             if(parsedSongsDto.getFilm() != null) {
                 Optional<Film> filmOptional = films.stream().filter(o -> o.getName().equals(parsedSongsDto.getFilm())).findFirst();
                 Film film;
-                if(!filmOptional.isPresent()) {
+                if(filmOptional.isEmpty()) {
                     film = Film.builder()
                             .name(parsedSongsDto.getFilm())
                             .build();
@@ -195,7 +182,7 @@ public class DataPreparationService {
             if(parsedSongsDto.getAlbum() != null) {
                 Optional<Album> albumOptional = albums.stream().filter(o -> o.getName().equals(parsedSongsDto.getAlbum())).findFirst();
                 Album album;
-                if(!albumOptional.isPresent()) {
+                if(albumOptional.isEmpty()) {
                     album = Album.builder()
                             .name(parsedSongsDto.getAlbum())
                             .build();
@@ -215,7 +202,7 @@ public class DataPreparationService {
 
                     Artiste artiste;
 
-                    if(!artisteOptional.isPresent()) {
+                    if(artisteOptional.isEmpty()) {
                         artiste = Artiste.builder()
                                 .name(artisteName)
                                 .isPrimary(false)
@@ -241,7 +228,7 @@ public class DataPreparationService {
             if(parsedSongsDto.getMood() != null) {
                 Optional<Mood> moodOptional = moods.stream().filter(o -> o.getName().equals(parsedSongsDto.getMood())).findFirst();
                 Mood mood;
-                if(!moodOptional.isPresent()) {
+                if(moodOptional.isEmpty()) {
                     mood = Mood.builder()
                             .name(parsedSongsDto.getAlbum())
                             .build();
@@ -267,7 +254,6 @@ public class DataPreparationService {
         }
     }
 
-    @Transactional
     private void saveAlbums(List<ParsedSongsDto> parsedSongsDtos) {
         Set<String> albumNames = parsedSongsDtos.stream().map(ParsedSongsDto::getAlbum).collect(Collectors.toSet());
 
@@ -284,13 +270,12 @@ public class DataPreparationService {
 
         for(Album album : albums) {
             Optional<Album> existingFilm = albumRepository.findByName(album.getName());
-            if(!existingFilm.isPresent()) {
+            if(existingFilm.isEmpty()) {
                 albumRepository.saveAndFlush(album);
             }
         }
     }
 
-    @Transactional
     private void saveFilm(List<ParsedSongsDto> parsedSongsDtos) {
         Set<String> filmNames = parsedSongsDtos.stream().map(ParsedSongsDto::getFilm).collect(Collectors.toSet());
 
@@ -307,13 +292,12 @@ public class DataPreparationService {
 
         for(Film film : films) {
             Optional<Film> existingFilm = filmRepository.findByName(film.getName());
-            if(!existingFilm.isPresent()) {
+            if(existingFilm.isEmpty()) {
                 filmRepository.saveAndFlush(film);
             }
         }
     }
 
-    @Transactional
     private void saveArtistes(List<ParsedSongsDto> parsedSongsDtos) {
         Set<String> primaryArtistesNames = parsedSongsDtos.stream().map(ParsedSongsDto::getPrimaryArtiste).collect(Collectors.toSet());
 
@@ -339,7 +323,7 @@ public class DataPreparationService {
 
         for(Artiste artiste : artists) {
             Optional<Artiste> existingFilm = artistesRepository.findByName(artiste.getName());
-            if(!existingFilm.isPresent()) {
+            if(existingFilm.isEmpty()) {
                 artistesRepository.saveAndFlush(artiste);
             }
         }
@@ -400,10 +384,10 @@ public class DataPreparationService {
     private List<File> listFilesInDirectory(String pathRelativeResourceDirectory) throws IOException {
         Resource resource = new ClassPathResource(pathRelativeResourceDirectory);
         var resourcePath =  resource.getURI().getPath();
-        resourcePath = resourcePath.substring(1,resourcePath.length());
+        resourcePath = resourcePath.substring(1);
         List<File> filesInDirectory = null;
         try (Stream<Path> walk = Files.walk(Paths.get(resourcePath))) {
-           filesInDirectory =  walk.filter(Files::isRegularFile).map(x -> x.toFile()).collect(Collectors.toList());
+           filesInDirectory =  walk.filter(Files::isRegularFile).map(Path::toFile).collect(Collectors.toList());
         } catch (IOException e) {
             e.printStackTrace();
         }

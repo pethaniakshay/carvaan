@@ -32,7 +32,7 @@ public class DataPreparationController {
         dataPreparationService.processArtistes();
         return GenericResponse
                 .builder()
-                .message("Data preparation completed successfully")
+                .message("Artistes added successfully")
                 .build();
     }
 }
