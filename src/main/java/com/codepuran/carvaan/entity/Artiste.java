@@ -22,9 +22,6 @@ public class Artiste {
     @Column(name = "name", nullable = false, length = 1000)
     private String name;
 
-    @Column(name = "is_primary")
-    private Boolean isPrimary;
-
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;

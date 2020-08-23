@@ -68,14 +68,14 @@ public class DataPreparationService {
     }
 
     public void processArtistes() throws IOException, CloneNotSupportedException {
-        //List<File> artistesFiles = listFilesInDirectory("data/processed/artistes");
-        List<File> artistesFiles = listFilesInDirectory("data/processed/test");
+        List<File> artistesFiles = listFilesInDirectory("data/processed/artistes");
+        //List<File> artistesFiles = listFilesInDirectory("data/processed/test");
         Pattern digitPattern = Pattern.compile("^\\d+\\.");
         Pattern filmPattern = Pattern.compile("^\\s?Film:");
         Pattern artistesPattern = Pattern.compile("^\\s?S?Artistes?:");
         Pattern albumPattern = Pattern.compile("^\\s?Album:");
         for(File file: artistesFiles) {
-            log.debug("Processing {} ", file.getName());
+            //log.debug("Processing {} ", file.getName());
             String pdfData = getContentOfPDFAsString(file);
             String[] allLines = pdfData.split("\\r?\\n");
             String primaryArtiste = file.getName().split(".pdf")[0];
@@ -83,11 +83,12 @@ public class DataPreparationService {
             List<ParsedSongsDto> parsedSongsDtos = new ArrayList<>();
             ParsedSongsDto parsedSongDto = new ParsedSongsDto();
             parsedSongDto.setPrimaryArtiste(primaryArtiste);
+            var primaryAr = savePrimaryArtiste(primaryArtiste);
             parsedSongDto.setFilled(false);
             for(String line : allLines) {
 
-                log.trace("Line: {}", line);
-                log.trace("=======================");
+                /*log.trace("Line: {}", line);
+                log.trace("=======================");*/
 
                 Matcher filmMatcher = filmPattern.matcher(line);
                 Matcher artisteMatcher = artistesPattern.matcher(line);
@@ -138,25 +139,31 @@ public class DataPreparationService {
                         case "digit" -> parsedSongDto.setName(parsedSongDto.getName() + line);
                         case "film" -> parsedSongDto.setFilm(parsedSongDto.getFilm() + line);
                         case "album" -> parsedSongDto.setAlbum(parsedSongDto.getAlbum() + line);
-                        case "artiste" -> parsedSongDto.setRawArtistes(parsedSongDto.getRawArtistes() + line);
+                        case "artiste" -> {
+                            if(parsedSongDto.getRawArtistes() != null
+                            && parsedSongDto.getRawArtistes().charAt(parsedSongDto.getRawArtistes().length()-1) != ',' ) {
+                                parsedSongDto.setRawArtistes(parsedSongDto.getRawArtistes() + ",");
+                            }
+                            parsedSongDto.setRawArtistes(parsedSongDto.getRawArtistes() + line);
+                        }
                         default -> log.warn("Akshay, You need to look here || Line: {}", line);
                     }
                 }
             }
             addParseSongDtoToListAndCleanItBeforeForArtistes(parsedSongsDtos,parsedSongDto);
             log.debug("Primary Artiste: {} || Songs Size: {}", primaryArtiste, parsedSongsDtos.size());
-            saveArtistesSongsToDatabase(parsedSongsDtos);
+            saveArtistesSongsToDatabase(parsedSongsDtos, primaryAr);
         }
     }
 
-    private void saveArtistesSongsToDatabase(List<ParsedSongsDto> parsedSongsDtos) {
+    private void saveArtistesSongsToDatabase(List<ParsedSongsDto> parsedSongsDtos, Artiste primaryArtiste) {
         saveAlbums(parsedSongsDtos);
         saveArtistes(parsedSongsDtos);
         saveFilm(parsedSongsDtos);
-        saveSongs(parsedSongsDtos);
+        saveSongs(parsedSongsDtos, primaryArtiste);
     }
 
-    private void saveSongs(List<ParsedSongsDto> parsedSongsDtos) {
+    private void saveSongs(List<ParsedSongsDto> parsedSongsDtos, Artiste primaryArtiste) {
 
         List<Film> films = filmRepository.findAll();
         List<Album> albums = albumRepository.findAll();
@@ -164,7 +171,7 @@ public class DataPreparationService {
         List<Mood> moods = moodRepository.findAll();
 
         for(ParsedSongsDto parsedSongsDto: parsedSongsDtos) {
-            List<Song> songs = songRepository.findByName(parsedSongsDto.getName());
+            List<Song> songs = songRepository.findByNameIgnoreCase(parsedSongsDto.getName());
             Song song = null;
             for(Song eachSong: songs) {
                 if(eachSong.getFilm() != null && parsedSongsDto.getFilm() != null) {
@@ -180,6 +187,8 @@ public class DataPreparationService {
             }
 
             song.setName(parsedSongsDto.getName());
+
+            song.setPrimaryArtistes(new HashSet<>(Collections.singletonList(primaryArtiste)));
 
             if(parsedSongsDto.getFilm() != null) {
                 Optional<Film> filmOptional = films.stream().filter(o -> o.getName().equals(parsedSongsDto.getFilm())).findFirst();
@@ -222,7 +231,6 @@ public class DataPreparationService {
                     if(artisteOptional.isEmpty()) {
                         artiste = Artiste.builder()
                                 .name(artisteName)
-                                .isPrimary(false)
                                 .build();
                         artiste = artistesRepository.saveAndFlush(artiste);
                         artistes.add(artiste);
@@ -286,7 +294,7 @@ public class DataPreparationService {
         }
 
         for(Album album : albums) {
-            Optional<Album> existingFilm = albumRepository.findByName(album.getName());
+            Optional<Album> existingFilm = albumRepository.findByNameIgnoreCase(album.getName());
             if(existingFilm.isEmpty()) {
                 albumRepository.saveAndFlush(album);
             }
@@ -308,7 +316,7 @@ public class DataPreparationService {
         }
 
         for(Film film : films) {
-            Optional<Film> existingFilm = filmRepository.findByName(film.getName());
+            Optional<Film> existingFilm = filmRepository.findByNameIgnoreCase(film.getName());
             if(existingFilm.isEmpty()) {
                 filmRepository.saveAndFlush(film);
             }
@@ -316,11 +324,6 @@ public class DataPreparationService {
     }
 
     private void saveArtistes(List<ParsedSongsDto> parsedSongsDtos) {
-        Set<String> primaryArtistesNames = parsedSongsDtos.stream().map(ParsedSongsDto::getPrimaryArtiste).collect(Collectors.toSet());
-
-        primaryArtistesNames.remove(null);
-        primaryArtistesNames.remove("");
-
         List<Artiste> artists = new ArrayList<>();
 
         for(ParsedSongsDto parsedSongsDto : parsedSongsDtos) {
@@ -330,21 +333,32 @@ public class DataPreparationService {
             }
             for(String parsedArtistName: artistesOfSongs) {
                 artists.add(Artiste.builder()
-                        .isPrimary(primaryArtistesNames.stream().filter(s -> s.trim().equals(parsedArtistName.trim())).findFirst().isPresent())
-                        //.isPrimary(primaryArtistesNames.contains(parsedArtistName))
                         .name(parsedArtistName.trim())
                         .build());
             }
         }
-
         artists = artists.stream().filter(distinctByKey(Artiste::getName)).collect(Collectors.toList());
 
+        TreeSet<String> seen = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        artists.removeIf(s -> !seen.add(s.getName()));
+
         for(Artiste artiste : artists) {
-            Optional<Artiste> existingFilm = artistesRepository.findByName(artiste.getName());
-            if(existingFilm.isEmpty()) {
+            Optional<Artiste> existingArtiste = artistesRepository.findByNameIgnoreCase(artiste.getName().trim());
+            if(existingArtiste.isEmpty()) {
                 artistesRepository.saveAndFlush(artiste);
             }
         }
+    }
+
+    private Artiste savePrimaryArtiste(String name) {
+        Optional<Artiste> existingArtiste = artistesRepository.findByNameIgnoreCase(name.trim());
+        if(existingArtiste.isEmpty()) {
+            var artiste = Artiste.builder()
+                    .name(name.trim())
+                    .build();
+            return artistesRepository.saveAndFlush(artiste);
+        }
+        return existingArtiste.get();
     }
 
     public static <T> Predicate<T> distinctByKey(Function<? super T, ?> keyExtractor) {
@@ -380,7 +394,10 @@ public class DataPreparationService {
         String rawArtiste = parsedSongsDto.getRawArtistes();
         if(rawArtiste != null) {
             rawArtiste = rawArtiste.replaceAll("( +)"," ").trim();
-            List<String> tempList = Arrays.asList(rawArtiste.split(","));
+            List<String> tempList = new ArrayList<>(Arrays.asList(rawArtiste.split(",")));
+            tempList.remove(null);
+            tempList.remove("");
+            tempList.remove(" ");
             Set<String> artisteSet = new HashSet<>();
             artisteSet.add(parsedSongsDto.getPrimaryArtiste());
             artisteSet.addAll(tempList);
@@ -426,14 +443,14 @@ public class DataPreparationService {
         splitDtos.add(FileSplitDto.builder().name("Talat Mahmood").firstPage(44).lastPage(45).build());
         splitDtos.add(FileSplitDto.builder().name("S.D. Burman").firstPage(46).lastPage(47).build());
         splitDtos.add(FileSplitDto.builder().name("R.D. Burman").firstPage(48).lastPage(51).build());
-        splitDtos.add(FileSplitDto.builder().name("Laxmikant-Pyarelal").firstPage(52).lastPage(56).build());//TODO
-        splitDtos.add(FileSplitDto.builder().name("Kalyanji-Anandji").firstPage(57).lastPage(59).build());//TODO
-        splitDtos.add(FileSplitDto.builder().name("Naushad").firstPage(60).lastPage(60).build());//TODO
-        splitDtos.add(FileSplitDto.builder().name("Shankar-Jaikishan").firstPage(61).lastPage(65).build());//TODO
+        splitDtos.add(FileSplitDto.builder().name("Laxmikant & Pyarelal").firstPage(52).lastPage(56).build());
+        splitDtos.add(FileSplitDto.builder().name("Kalyanji & Anandji").firstPage(57).lastPage(59).build());
+        splitDtos.add(FileSplitDto.builder().name("Naushad").firstPage(60).lastPage(60).build());
+        splitDtos.add(FileSplitDto.builder().name("Shankar & Jaikishan").firstPage(61).lastPage(65).build());
         splitDtos.add(FileSplitDto.builder().name("O.P. Nayyar").firstPage(66).lastPage(67).build());
         splitDtos.add(FileSplitDto.builder().name("Gulzar").firstPage(68).lastPage(69).build());
         splitDtos.add(FileSplitDto.builder().name("Madan Mohan").firstPage(70).lastPage(71).build());
-        splitDtos.add(FileSplitDto.builder().name("Kaifi Azmi - Javed Akhtar").firstPage(72).lastPage(73).build());
+        splitDtos.add(FileSplitDto.builder().name("Kaifi Azmi & Javed Akhtar").firstPage(72).lastPage(73).build());
         splitDtos.add(FileSplitDto.builder().name("Sahir Ludhianvi").firstPage(74).lastPage(75).build());
         splitDtos.add(FileSplitDto.builder().name("Anand Bakshi").firstPage(76).lastPage(81).build());
         splitDtos.add(FileSplitDto.builder().name("Majrooh Sultanpuri").firstPage(82).lastPage(85).build());

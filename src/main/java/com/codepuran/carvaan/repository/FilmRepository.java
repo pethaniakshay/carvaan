@@ -7,5 +7,5 @@ import java.util.Optional;
 
 public interface FilmRepository extends JpaRepository<Film, Long> {
 
-    Optional<Film> findByName(String name);
+    Optional<Film> findByNameIgnoreCase(String name);
 }

@@ -23,6 +23,12 @@ public class Song {
     private String name;
 
     @ManyToMany
+    @JoinTable(name = "songs_primary_artistes",
+            joinColumns = @JoinColumn(name = "song_id"),
+            inverseJoinColumns = @JoinColumn(name = "artiste_id"))
+    private Set<Artiste> primaryArtistes;
+
+    @ManyToMany
     @JoinTable(name = "songs_artistes",
     joinColumns = @JoinColumn(name = "song_id"),
     inverseJoinColumns = @JoinColumn(name = "artiste_id"))
